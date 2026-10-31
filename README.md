@@ -8,8 +8,7 @@ registry, through the Docker daemon, whether the tag a container runs points to 
 one it was started from. It never pulls, restarts or changes anything.
 
 > **Status:** in development (0.x). The exporter skeleton runs (endpoints, config, Docker connection);
-> the image check itself is being designed and not available yet. Behavior and metrics may change
-> before 1.0.
+> the image check itself is designed but not built yet. Behavior and metrics may change before 1.0.
 
 ## Why
 
