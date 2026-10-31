@@ -37,7 +37,8 @@ By submitting a pull request you agree that your contribution is licensed under 
 Please include:
 
 - **What happened** and **what you expected**.
-- The **ImageAdvisor version**: the image tag or digest, or the `version` label of `imageadvisor_build_info`.
+- The **ImageAdvisor version**: the image tag or digest, or the `version` label of
+  `imageadvisor_build_info`.
 - The **Docker version** and the **image reference** of the affected container
   (`docker inspect --format '{{.Config.Image}}' <container>`).
 - The relevant lines of **`/metrics`** and of the **container log** (`docker logs <container>`).
@@ -52,8 +53,8 @@ Note that not every request will be implemented; ImageAdvisor intentionally stay
 
 ## Forking
 
-ImageAdvisor is licensed under the **GNU AGPL v3** (see [LICENSE](LICENSE)). You are of course free to fork
-and modify it under those terms.
+ImageAdvisor is licensed under the **GNU AGPL v3** (see [LICENSE](LICENSE)). You are of course free to
+fork and modify it under those terms.
 
 ## Support Me
 

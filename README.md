@@ -1,6 +1,6 @@
 # ImageAdvisor
 
-Which of your running containers have a newer image in their registry? As Prometheus metrics.
+Which of your containers have a newer image in their registry? As Prometheus metrics.
 
 ImageAdvisor runs as a container next to [cAdvisor](https://github.com/google/cadvisor) and
 [node_exporter](https://github.com/prometheus/node_exporter). It reads the Docker API and asks the
@@ -65,8 +65,8 @@ The image already sets `--config.file=/data/config.yml`. Endpoints: `/metrics`, 
 
 > **The default port changes with version 1.0.**
 >
-> Before 1.0, ImageAdvisor serves `/metrics` on port **8080** (the same default as cAdvisor). With 1.0 the
-> default changes to a port registered in the Prometheus
+> Before 1.0, ImageAdvisor serves `/metrics` on port **8080** (the same default as cAdvisor). With 1.0
+> the default changes to a port registered in the Prometheus
 > [default port allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
 > If you depend on the port, set it explicitly with `--web.listen-address`, and update your Prometheus
 > scrape configuration when you move to 1.0.

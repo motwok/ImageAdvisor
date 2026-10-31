@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 FROM scratch
 COPY --from=build /out/imageadvisor /imageadvisor
 LABEL org.opencontainers.image.source="https://github.com/motwok/ImageAdvisor" \
-      org.opencontainers.image.description="Prometheus exporter that reports which running containers have a newer image in their registry." \
+      org.opencontainers.image.description="Prometheus exporter that reports which containers have a newer image in their registry." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 EXPOSE 8080
 ENTRYPOINT ["/imageadvisor"]

@@ -1,10 +1,10 @@
 # Releasing ImageAdvisor
 
 ImageAdvisor is released as a container image, `ghcr.io/motwok/imageadvisor`, with
-[Semantic Versioning](https://semver.org) (0.x before 1.0). **Every merge into `master` that changes the
-image is a release**, that is changes to Go code (not tests), `go.mod`/`go.sum` or the `Dockerfile`. Merges that
-only touch documentation or CI build nothing new; they are listed in the next real release. There is no
-manual release step: merging a pull request is the approval.
+[Semantic Versioning](https://semver.org) (0.x before 1.0). **Every merge into `master` that changes
+the image is a release**, that is changes to Go code (not tests), `go.mod`/`go.sum` or the `Dockerfile`.
+Merges that only touch documentation or CI build nothing new; they are listed in the next real release.
+There is no manual release step: merging a pull request is the approval.
 
 ## Workflows at a glance
 
@@ -53,9 +53,8 @@ Labels are set automatically from Conventional Commit titles (`feat:`, `fix:`, `
 ## Dependency updates are released automatically
 
 **An update of Go or of a dependency triggers a release on its own** (updates of GitHub Actions only
-touch CI and do not). Dependabot opens the pull request,
-it is merged automatically once the build and the smoke test pass, and the result is a new patch
-release. If you run `:latest` and redeploy regularly, you get it without doing anything.
+touch CI and do not). Dependabot opens the pull request, it is merged automatically once the build and
+the smoke test pass, and the result is a new patch release. If you run `:latest` and redeploy regularly, you get it without doing anything.
 
 That is how security fixes in Go and its standard library reach you quickly. It also means:
 
@@ -87,5 +86,5 @@ ImageAdvisor only publishes images. Pulling `:latest` and redeploying the contai
 deployment, for example a scheduled stack redeploy. No credentials are needed: the repository and the
 image are public.
 
-ImageAdvisor can optionally tell you when a newer `:latest` exists than the one it runs (image update
-check, off by default), so you notice a stuck redeploy.
+Once the image check is built, ImageAdvisor reports its own container like every other one, so a stuck
+redeploy of ImageAdvisor itself shows up too.
