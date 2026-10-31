@@ -54,7 +54,8 @@ Labels are set automatically from Conventional Commit titles (`feat:`, `fix:`, `
 
 **An update of Go or of a dependency triggers a release on its own** (updates of GitHub Actions only
 touch CI and do not). Dependabot opens the pull request, it is merged automatically once the build and
-the smoke test pass, and the result is a new patch release. If you run `:latest` and redeploy regularly, you get it without doing anything.
+the smoke test pass, and the result is a new patch release. If you run `:latest` and redeploy
+regularly, you get it without doing anything.
 
 That is how security fixes in Go and its standard library reach you quickly. It also means:
 
