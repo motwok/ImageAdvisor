@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Command imageadvisor reports which running containers have a newer image in their registry.
+// Command imageadvisor reports which containers have a newer image in their registry.
 package main
 
 import (

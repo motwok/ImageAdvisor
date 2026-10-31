@@ -8,6 +8,10 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
+# Go code is formatted by gofmt, which uses tabs.
+[*.go]
+indent_style = tab
+
 # Data / markup files use 2-space indentation.
 [*.{yml,yaml,json}]
 indent_size = 2
