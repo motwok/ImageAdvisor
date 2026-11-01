@@ -116,7 +116,8 @@ func (c *Core) observe(ctx context.Context, cfg *config.Config) ([]observed, err
 			im, ok := images[ct.ImageID]
 			if !ok {
 				if im, err = c.dk.Image(ctx, ct.ImageID); docker.IsNotFound(err) {
-					continue // removed with its container since the list
+					// Removed with "docker rmi -f": the ID is the only running digest.
+					im = docker.Image{ID: ct.ImageID}
 				} else if err != nil {
 					return nil, err
 				}

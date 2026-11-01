@@ -533,20 +533,29 @@ func TestConfigAndDefaults(t *testing.T) {
 	}
 }
 
-// Containers removed between the list and the inspect are skipped, not a failed reconcile.
+// Containers removed between the list and the inspect are skipped, not a failed
+// reconcile; a container whose image was removed (rmi -f) is reported by its image ID.
 func TestVanishedContainers(t *testing.T) {
 	r := newRig(t, "")
 	r.f.add("web", "nginx:1", "sha256:a", "running", nil)
 	r.f.add("gone", "nginx:1", "sha256:a", "running", nil)
-	r.f.add("noimage", "redis:7", "sha256:b", "running", nil)
+	r.f.add("noimage", "redis:7", "sha256:b", "exited", nil)
 	r.f.gone["c-gone"] = true
 	delete(r.f.images, "sha256:b")
+	r.f.dist["docker.io/library/redis:7"] = "sha256:r"
 	r.reconcile()
 	if r.c.recErrors != 0 || !r.c.Ready() {
 		t.Fatal("vanished containers failed the reconcile")
 	}
-	r.has(`imageadvisor_container_image_info{container="web",mode="pending",reference="docker.io/library/nginx:1",state="running"} 1`)
-	r.hasNot(`container="gone"`, `container="noimage"`)
+	r.has(`imageadvisor_container_image_info{container="web",mode="pending",reference="docker.io/library/nginx:1",state="running"} 1`,
+		`imageadvisor_container_image_info{container="noimage",mode="pending",reference="docker.io/library/redis:7",state="stopped"} 1`,
+		`imageadvisor_container_image_update_pulled{container="noimage",image="redis:7"} 0`)
+	r.hasNot(`container="gone"`)
+	r.checkAll()
+	r.clk.add(10 * time.Second)
+	r.checkAll()
+	r.reconcile()
+	r.has(`imageadvisor_container_image_update_available{container="noimage",image="redis:7"} 1`)
 }
 
 // Removed containers leave nothing behind in the change log and warning memory.

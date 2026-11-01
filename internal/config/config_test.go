@@ -134,10 +134,17 @@ func TestExpand(t *testing.T) {
 			t.Errorf("Expand(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"${B}", "${", "${1A}"} {
+	for _, in := range []string{"${B}", "${", "${1A}", "pa${ss", "${my pass}"} {
 		if _, err := Expand(in, e); err == nil {
 			t.Errorf("Expand(%q): expected error", in)
+		} else if strings.Contains(err.Error(), "pa") {
+			t.Errorf("Expand(%q): value in the error: %v", in, err)
 		}
+	}
+	// The error names the key, never the value.
+	_, err := Parse([]byte(`registries: [ { host: x, password: "pa${ss" } ]`), e)
+	if err == nil || !strings.HasPrefix(err.Error(), "registries[0].password: unterminated ${") {
+		t.Fatalf("error: %v", err)
 	}
 }
 
