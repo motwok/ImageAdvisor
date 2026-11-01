@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force cover-unit | Out-Null
-          go test -covermode=atomic -coverpkg=./... -cover ./... -args "-test.gocoverdir=$PWD\cover-unit"
+          go test "-covermode=atomic" "-coverpkg=./..." -cover ./... -args "-test.gocoverdir=$PWD\cover-unit"
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Cross build
         if: runner.os == 'Linux'
@@ -97,7 +97,7 @@ jobs:
         shell: pwsh
         run: |
           $env:CGO_ENABLED = '0'
-          go build -cover -covermode=atomic -coverpkg=./... -o dist/imageadvisor.exe ./cmd/imageadvisor
+          go build -cover "-covermode=atomic" "-coverpkg=./..." -o dist/imageadvisor.exe ./cmd/imageadvisor
           if ($LASTEXITCODE -ne 0) { exit 1 }
           docker build -f Dockerfile.windows --build-arg OSVERSION=${{ matrix.ltsc }} -t imageadvisor:test .
           if ($LASTEXITCODE -ne 0) { exit 1 }
