@@ -20,6 +20,7 @@ func TestParse(t *testing.T) {
 		"nginx:1.29@sha256:abc":                  "docker.io/library/nginx:1.29@sha256:abc",
 		"ia-reg:5000/sw:1@sha256:abc":            "ia-reg:5000/sw:1@sha256:abc",
 		"mcr.microsoft.com/windows/nanoserver:x": "mcr.microsoft.com/windows/nanoserver:x",
+		"MyProject/app":                          "MyProject/app:latest",
 	} {
 		if got := Parse(in).String(); got != want {
 			t.Errorf("%s: got %s, want %s", in, got, want)

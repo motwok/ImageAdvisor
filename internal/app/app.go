@@ -260,7 +260,7 @@ func waitDone(ctx context.Context, done <-chan struct{}) {
 
 // loop runs the reconciles (DIS-1) until ctx ends; 1 means the Docker API is too old.
 func (s *Server) loop(ctx context.Context, hup <-chan os.Signal) int {
-	for {
+	for ctx.Err() == nil {
 		if st := stamp(s.Flags.ConfigFile); st != s.cfgStat {
 			s.Reload()
 		}
@@ -286,6 +286,7 @@ func (s *Server) loop(ctx context.Context, hup <-chan os.Signal) int {
 			res <- s.Reload()
 		}
 	}
+	return 0
 }
 
 func (s *Server) poke() {

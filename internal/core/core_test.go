@@ -162,6 +162,40 @@ func TestSwarm(t *testing.T) {
 	}
 }
 
+// start-first: the new task on the current image and the old one share a slot
+// for a while; since stays until the old task is gone.
+func TestSwarmStartFirst(t *testing.T) {
+	r := newRig(t, "")
+	task := func(id string) map[string]string {
+		return map[string]string{swarmTask: id, "com.docker.swarm.service.name": "st_web",
+			"com.docker.swarm.task.name": "st_web.1." + id}
+	}
+	r.f.add("st_web.1.old", "reg:5000/sw:1@sha256:old", "sha256:old", "running", task("old"))
+	r.f.dist["reg:5000/sw:1"] = "sha256:new"
+	r.reconcile()
+	r.checkAll()
+	r.reconcile()
+	since := r.c.st.Since["swarm:st_web.1|reg:5000/sw:1"].Since
+	r.clk.add(time.Hour)
+	// Docker lists the newest container first.
+	r.f.containers = append([]docker.Container{{ID: "c-new", Names: []string{"/st_web.1.new"}, ImageID: "sha256:new",
+		State: "running", Labels: task("new")}}, r.f.containers...)
+	r.f.configs["c-new"] = "reg:5000/sw:1@sha256:new"
+	r.f.images["sha256:new"] = docker.Image{ID: "sha256:new"}
+	r.reconcile()
+	r.has(`imageadvisor_container_image_update_available{container="st_web.1.new",image="reg:5000/sw:1"} 0`,
+		`imageadvisor_container_image_update_available{container="st_web.1.old",image="reg:5000/sw:1"} 1`,
+		`imageadvisor_container_image_update_available_since_timestamp_seconds{container="st_web.1.old",image="reg:5000/sw:1"} 1e+06`)
+	if s := r.c.st.Since["swarm:st_web.1|reg:5000/sw:1"]; s == nil || s.Since != since {
+		t.Fatalf("since replaced: %+v", s)
+	}
+	r.f.containers = r.f.containers[:1]
+	r.reconcile()
+	if r.c.st.Since["swarm:st_web.1|reg:5000/sw:1"] != nil {
+		t.Fatal("since kept after the old task left")
+	}
+}
+
 func TestLabels(t *testing.T) {
 	r := newRig(t, `
 container_labels:
@@ -348,6 +382,16 @@ func TestReconcileErrors(t *testing.T) {
 		if r.c.recErrors != before+1 || r.c.Ready() {
 			t.Errorf("%s: not counted", name)
 		}
+	}
+	// Cut off by the shutdown: not a failure.
+	r.f = newFake()
+	r.f.listErr = context.Canceled
+	r.start()
+	r.log.Reset()
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := r.c.Reconcile(canceled); err != nil || r.c.recErrors != 0 || strings.Contains(r.log.String(), "reconcile failed") {
+		t.Fatalf("shutdown counted: %v %v", err, r.c.recErrors)
 	}
 	r.f = newFake()
 	r.f.verErr = errBoom

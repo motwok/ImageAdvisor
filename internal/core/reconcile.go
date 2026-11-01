@@ -46,8 +46,11 @@ func (c *Core) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		c.recErrors++
-		c.log.Warn("reconcile failed", "err", err)
+		// A reconcile cut off by the shutdown is no failure.
+		if ctx.Err() == nil {
+			c.recErrors++
+			c.log.Warn("reconcile failed", "err", err)
+		}
 		return nil
 	}
 	c.apply(cfg, obs)
@@ -215,6 +218,8 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 	now := c.now().Unix()
 	usedRefs := map[string]bool{}
 	usedSince := map[string]bool{}
+	// since keys reported with update_available 1 and 0 in this reconcile.
+	up, down := map[string]bool{}, map[string]bool{}
 	prev := c.prev
 	c.prev = map[string]entry{}
 	var view []entry
@@ -245,6 +250,11 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 			case rs.Digest != "":
 				e.Mode = "checked"
 				c.compare(&e, rs, sk, now)
+				if e.Available == 1 {
+					up[sk] = true
+				} else {
+					down[sk] = true
+				}
 			case rs.Checked:
 				e.Mode = "error"
 			default:
@@ -253,6 +263,12 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 		}
 		c.logChange(prev, e)
 		view = append(view, e)
+	}
+	// A key with several containers (Swarm start-first) keeps since while one reports 1.
+	for sk := range down {
+		if !up[sk] {
+			delete(c.st.Since, sk)
+		}
 	}
 	forget := int64(cfg.Global.ForgetAfter.D().Seconds())
 	for k, rs := range c.st.Refs {
@@ -281,11 +297,10 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 	c.view = view
 }
 
-// compare sets available and since (CMP-2, CMP-3).
+// compare sets available and since (CMP-2, CMP-3); apply drops the since of a 0.
 func (c *Core) compare(e *entry, rs *state.Ref, sk string, now int64) {
 	if slices.Contains(e.running, rs.Digest) {
 		e.Available = 0
-		delete(c.st.Since, sk)
 		return
 	}
 	e.Available = 1

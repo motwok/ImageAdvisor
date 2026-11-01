@@ -23,7 +23,8 @@ func Parse(s string) Ref {
 	}
 	r.Domain, r.Path = hub, s
 	if i := strings.Index(s, "/"); i >= 0 {
-		if first := s[:i]; strings.ContainsAny(first, ".:") || first == "localhost" {
+		// Docker: a first component with ".", ":", "localhost" or an uppercase letter is the registry.
+		if first := s[:i]; strings.ContainsAny(first, ".:") || first == "localhost" || first != strings.ToLower(first) {
 			r.Domain, r.Path = first, s[i+1:]
 		}
 	}
