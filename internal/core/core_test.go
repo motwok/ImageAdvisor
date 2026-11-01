@@ -520,3 +520,21 @@ func TestForgetRemovedContainers(t *testing.T) {
 		t.Fatalf("prev %v warned %v", r.c.prev, r.c.warned)
 	}
 }
+
+// A check cut off by the shutdown is not recorded as a failure.
+func TestShutdownDuringCheck(t *testing.T) {
+	r := newRig(t, "")
+	r.f.add("web", "nginx:1", "sha256:a", "running", nil, "docker.io/library/nginx@sha256:a")
+	r.f.dist["docker.io/library/nginx:1"] = "sha256:a"
+	r.reconcile()
+	r.checkAll()
+	ctx, cancel := context.WithCancel(context.Background())
+	r.f.onDist = cancel
+	r.f.distErr["docker.io/library/nginx:1"] = context.Canceled
+	r.clk.add(48 * time.Hour)
+	r.c.CheckDue(ctx)
+	if rs := r.c.st.Refs["docker.io/library/nginx:1"]; rs.Reason != "" || rs.Fails != 0 || rs.Digest != "sha256:a" {
+		t.Fatalf("recorded as failure: %+v", rs)
+	}
+	r.hasNot(`image_check_error`)
+}

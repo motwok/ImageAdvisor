@@ -115,7 +115,8 @@ func (c *Core) CheckDue(ctx context.Context) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	rs := c.st.Refs[r]
-	if rs == nil {
+	if rs == nil || ctx.Err() != nil {
+		// A check cut off by the shutdown is no answer of the registry.
 		return 0
 	}
 	t := c.now().Unix()
