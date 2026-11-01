@@ -22,4 +22,4 @@ LABEL org.opencontainers.image.source="https://github.com/motwok/ImageAdvisor" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 EXPOSE 8080
 ENTRYPOINT ["/imageadvisor"]
-CMD ["--config.file=/data/config.yml"]
+CMD ["--config.file=/data/config.yml", "--storage.path=/data"]

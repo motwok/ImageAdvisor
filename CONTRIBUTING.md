@@ -26,7 +26,7 @@ merged. To make that easy:
   need to be agreed in an issue first.
 - Do not put raw non-ASCII characters into source code; write them as escape sequences (`\uXXXX`).
 - Diagrams in Markdown are Mermaid, not ASCII art.
-- The build, including the smoke test, must be green.
+- The build, including the unit and integration tests, must be green.
 - Test coverage (unit and integration combined) must stay at 99% or more; add tests with new code.
 
 By submitting a pull request you agree that your contribution is licensed under the

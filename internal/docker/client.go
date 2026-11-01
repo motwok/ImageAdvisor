@@ -4,6 +4,7 @@
 package docker
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,11 +23,9 @@ const MinAPIVersion = "1.41"
 type Container struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`
-	Image   string            `json:"Image"`
 	ImageID string            `json:"ImageID"`
 	Labels  map[string]string `json:"Labels"`
 	State   string            `json:"State"`
-	Created int64             `json:"Created"`
 }
 
 // Name is the container name without the leading slash.
@@ -45,26 +44,54 @@ type ContainerJSON struct {
 	} `json:"Config"`
 }
 
+type Image struct {
+	ID          string   `json:"Id"`
+	RepoDigests []string `json:"RepoDigests"`
+}
+
+type Event struct {
+	Type   string `json:"Type"`
+	Action string `json:"Action"`
+}
+
+// Relevant reports whether an event can change what ImageAdvisor reports.
+func (e Event) Relevant() bool {
+	switch e.Type {
+	case "container":
+		switch e.Action {
+		case "create", "start", "stop", "die", "destroy":
+			return true
+		}
+	case "image":
+		switch e.Action {
+		case "pull", "tag", "untag", "delete":
+			return true
+		}
+	}
+	return false
+}
+
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
 type Client struct {
 	hc      *http.Client
+	stream  *http.Client
 	version string
 }
 
-// New creates a client for a Unix socket.
+// New creates a client for the Docker socket (Linux) or named pipe (Windows).
 func New(socket string) *Client {
-	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "unix", socket)
-	}
+	d := dialer(socket)
 	return &Client{
-		hc:      &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{DialContext: dial}},
+		hc:      &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{DialContext: d}},
+		stream:  &http.Client{Transport: &http.Transport{DialContext: d}},
 		version: MinAPIVersion,
 	}
 }
 
 // NewWithHTTP uses a custom transport (tests).
 func NewWithHTTP(rt http.RoundTripper) *Client {
-	return &Client{hc: &http.Client{Transport: rt}, version: MinAPIVersion}
+	return &Client{hc: &http.Client{Transport: rt}, stream: &http.Client{Transport: rt}, version: MinAPIVersion}
 }
 
 type APIError struct {
@@ -74,10 +101,13 @@ type APIError struct {
 
 func (e *APIError) Error() string { return fmt.Sprintf("docker API %d: %s", e.Status, e.Message) }
 
-func (c *Client) get(ctx context.Context, p string, out any) error {
+func (c *Client) do(ctx context.Context, p string, header http.Header, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.version+p, nil)
 	if err != nil {
 		return err
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -144,31 +174,60 @@ func CompareVersion(a, b string) int {
 
 func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 	var r []Container
-	err := c.get(ctx, "/containers/json?all=1", &r)
+	err := c.do(ctx, "/containers/json?all=1", nil, &r)
 	return r, err
 }
 
 func (c *Client) Container(ctx context.Context, id string) (ContainerJSON, error) {
 	var r ContainerJSON
-	err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/json", &r)
+	err := c.do(ctx, "/containers/"+url.PathEscape(id)+"/json", nil, &r)
 	return r, err
 }
 
-func (c *Client) ImageRepoDigests(ctx context.Context, id string) ([]string, error) {
-	var r struct {
-		RepoDigests []string `json:"RepoDigests"`
-	}
-	err := c.get(ctx, "/images/"+url.PathEscape(id)+"/json", &r)
-	return r.RepoDigests, err
+// Image inspects an image by ID or reference; an unknown one is an *APIError with Status 404.
+func (c *Client) Image(ctx context.Context, idOrRef string) (Image, error) {
+	var r Image
+	err := c.do(ctx, "/images/"+idOrRef+"/json", nil, &r)
+	return r, err
 }
 
-// DistributionDigest asks the daemon for the registry digest of an image reference.
-func (c *Client) DistributionDigest(ctx context.Context, ref string) (string, error) {
+// Distribution asks the daemon for the registry digest of an image reference.
+// auth is the X-Registry-Auth value, or empty.
+func (c *Client) Distribution(ctx context.Context, ref, auth string) (string, error) {
 	var r struct {
 		Descriptor struct {
 			Digest string `json:"digest"`
 		} `json:"Descriptor"`
 	}
-	err := c.get(ctx, "/distribution/"+ref+"/json", &r)
+	var h http.Header
+	if auth != "" {
+		h = http.Header{"X-Registry-Auth": {auth}}
+	}
+	err := c.do(ctx, "/distribution/"+ref+"/json", h, &r)
 	return r.Descriptor.Digest, err
+}
+
+// Events streams container and image events until ctx ends or the stream breaks.
+func (c *Client) Events(ctx context.Context, fn func(Event)) error {
+	filters := url.QueryEscape(`{"type":["container","image"]}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.version+"/events?filters="+filters, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &APIError{Status: resp.StatusCode, Message: "events"}
+	}
+	dec := json.NewDecoder(bufio.NewReader(resp.Body))
+	for {
+		var e Event
+		if err := dec.Decode(&e); err != nil {
+			return err
+		}
+		fn(e)
+	}
 }

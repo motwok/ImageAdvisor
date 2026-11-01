@@ -3,4 +3,5 @@
 !go.sum
 !cmd/
 !internal/
+!dist/imageadvisor.exe
 **/*_test.go
