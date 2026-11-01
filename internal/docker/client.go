@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,12 +29,15 @@ type Container struct {
 	State   string            `json:"State"`
 }
 
-// Name is the container name without the leading slash.
+// Name is the container name without the leading slash. Legacy links add
+// aliases like "/other/alias" in no fixed order; those are skipped.
 func (c Container) Name() string {
-	if len(c.Names) == 0 {
-		return c.ID
+	for _, n := range c.Names {
+		if n = strings.TrimPrefix(n, "/"); !strings.Contains(n, "/") {
+			return n
+		}
 	}
-	return strings.TrimPrefix(c.Names[0], "/")
+	return c.ID
 }
 
 type ContainerJSON struct {
@@ -115,20 +119,31 @@ func (c *Client) do(ctx context.Context, p string, header http.Header, out any) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		var m struct {
-			Message string `json:"message"`
-		}
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		if json.Unmarshal(b, &m) != nil || m.Message == "" {
-			m.Message = strings.TrimSpace(string(b))
-		}
-		return &APIError{Status: resp.StatusCode, Message: m.Message}
+		return apiError(resp)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func apiError(resp *http.Response) error {
+	var m struct {
+		Message string `json:"message"`
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if json.Unmarshal(b, &m) != nil || m.Message == "" {
+		m.Message = strings.TrimSpace(string(b))
+	}
+	return &APIError{Status: resp.StatusCode, Message: m.Message}
+}
+
+// IsNotFound reports whether err is a 404 from the Docker API.
+func IsNotFound(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
+}
+
 // CheckVersion reads the daemon's API version and fails below MinAPIVersion.
-// It returns the version and whether the daemon was reached.
+// reached is true only if the daemon answered with a version, so any other
+// failure is retried instead of read as "too old".
 func (c *Client) CheckVersion(ctx context.Context) (version string, reached bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/version", nil)
 	if err != nil {
@@ -139,11 +154,14 @@ func (c *Client) CheckVersion(ctx context.Context) (version string, reached bool
 		return "", false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false, apiError(resp)
+	}
 	var v struct {
 		APIVersion string `json:"ApiVersion"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		return "", true, err
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || v.APIVersion == "" {
+		return "", false, fmt.Errorf("no API version in the /version answer: %v", err)
 	}
 	if CompareVersion(v.APIVersion, MinAPIVersion) < 0 {
 		return v.APIVersion, true, fmt.Errorf("Docker API %s is older than the required %s", v.APIVersion, MinAPIVersion)

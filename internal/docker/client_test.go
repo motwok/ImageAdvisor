@@ -185,10 +185,39 @@ func TestErrors(t *testing.T) {
 	if _, err := e.Containers(ctx); err == nil || err.(*APIError).Message != "plain failure" {
 		t.Errorf("plain error: %v", err)
 	}
-	if _, reached, err := e.CheckVersion(ctx); err == nil || !reached {
+	if _, reached, err := e.CheckVersion(ctx); err == nil || reached || err.(*APIError).Status != 500 {
+		t.Errorf("version: status: %v", err)
+	}
+	g := NewWithHTTP(rt{http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "not json")
+	})})
+	if _, reached, err := g.CheckVersion(ctx); err == nil || reached {
 		t.Errorf("version: bad body: %v", err)
 	}
 	if err := e.Events(ctx, nil); err == nil || err.(*APIError).Status != 500 {
 		t.Errorf("events: status: %v", err)
+	}
+}
+
+func TestNameSkipsLinkAliases(t *testing.T) {
+	for names, want := range map[string]string{
+		"/app/web,/web": "web",
+		"/web":          "web",
+		"/app/web":      "id",
+		"":              "id",
+	} {
+		c := Container{ID: "id"}
+		if names != "" {
+			c.Names = strings.Split(names, ",")
+		}
+		if got := c.Name(); got != want {
+			t.Errorf("%q: got %q, want %q", names, got, want)
+		}
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	if !IsNotFound(&APIError{Status: 404}) || IsNotFound(&APIError{Status: 500}) || IsNotFound(errors.New("x")) {
+		t.Fatal("IsNotFound")
 	}
 }

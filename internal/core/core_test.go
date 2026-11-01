@@ -488,3 +488,35 @@ func TestConfigAndDefaults(t *testing.T) {
 		t.Fatal("rand")
 	}
 }
+
+// Containers removed between the list and the inspect are skipped, not a failed reconcile.
+func TestVanishedContainers(t *testing.T) {
+	r := newRig(t, "")
+	r.f.add("web", "nginx:1", "sha256:a", "running", nil)
+	r.f.add("gone", "nginx:1", "sha256:a", "running", nil)
+	r.f.add("noimage", "redis:7", "sha256:b", "running", nil)
+	r.f.gone["c-gone"] = true
+	delete(r.f.images, "sha256:b")
+	r.reconcile()
+	if r.c.recErrors != 0 || !r.c.Ready() {
+		t.Fatal("vanished containers failed the reconcile")
+	}
+	r.has(`imageadvisor_container_image_info{container="web",mode="pending",reference="docker.io/library/nginx:1",state="running"} 1`)
+	r.hasNot(`container="gone"`, `container="noimage"`)
+}
+
+// Removed containers leave nothing behind in the change log and warning memory.
+func TestForgetRemovedContainers(t *testing.T) {
+	r := newRig(t, "")
+	r.f.add("web", "nginx:1", "sha256:a", "running", map[string]string{labelSelf + "bad-name": "x"})
+	r.f.add("db", "redis:7", "sha256:b", "running", nil)
+	r.reconcile()
+	if len(r.c.prev) != 2 || len(r.c.warned) != 1 {
+		t.Fatalf("prev %d warned %d", len(r.c.prev), len(r.c.warned))
+	}
+	r.f.containers = r.f.containers[1:]
+	r.reconcile()
+	if _, ok := r.c.prev["web"]; ok || len(r.c.prev) != 1 || len(r.c.warned) != 0 {
+		t.Fatalf("prev %v warned %v", r.c.prev, r.c.warned)
+	}
+}

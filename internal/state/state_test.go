@@ -80,8 +80,11 @@ func TestLoadUnreadable(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, FileName), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir); err == nil {
-		t.Fatal("expected error for a directory")
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "moved") {
+		t.Fatalf("expected the unreadable state to be moved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, FileName+".bak")); err != nil {
+		t.Fatal(err)
 	}
 }
 

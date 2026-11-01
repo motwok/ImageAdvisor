@@ -67,11 +67,11 @@ func Load(dir string) (*State, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return New(), nil
 	}
-	if err != nil {
-		return New(), err
-	}
 	s := &State{}
-	perr := json.Unmarshal(data, s)
+	perr := err
+	if perr == nil {
+		perr = json.Unmarshal(data, s)
+	}
 	if perr == nil && s.SchemaVersion > SchemaVersion {
 		perr = fmt.Errorf("schema_version %d is newer than %d", s.SchemaVersion, SchemaVersion)
 	}
