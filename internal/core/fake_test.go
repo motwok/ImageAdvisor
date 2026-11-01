@@ -27,6 +27,7 @@ type fakeDocker struct {
 	listErr    error
 	configs    map[string]string
 	inspectErr error
+	gone       map[string]bool
 	images     map[string]docker.Image
 	imageErr   map[string]error
 	dist       map[string]string
@@ -38,7 +39,7 @@ type fakeDocker struct {
 
 func newFake() *fakeDocker {
 	return &fakeDocker{version: "1.47", reached: true, configs: map[string]string{}, images: map[string]docker.Image{},
-		imageErr: map[string]error{}, dist: map[string]string{}, distErr: map[string]error{}}
+		imageErr: map[string]error{}, dist: map[string]string{}, distErr: map[string]error{}, gone: map[string]bool{}}
 }
 
 func (f *fakeDocker) CheckVersion(context.Context) (string, bool, error) {
@@ -56,6 +57,9 @@ func (f *fakeDocker) Containers(context.Context) ([]docker.Container, error) {
 func (f *fakeDocker) Container(_ context.Context, id string) (docker.ContainerJSON, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.gone[id] {
+		return docker.ContainerJSON{}, &docker.APIError{Status: 404, Message: "no such container"}
+	}
 	var j docker.ContainerJSON
 	j.ID = id
 	j.Config.Image = f.configs[id]

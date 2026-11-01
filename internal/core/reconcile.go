@@ -93,6 +93,9 @@ func (c *Core) observe(ctx context.Context, cfg *config.Config) ([]observed, err
 		}
 		seen[ct.ID] = true
 		written, err := c.configImage(ctx, ct.ID)
+		if docker.IsNotFound(err) {
+			continue // removed since the list
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +112,9 @@ func (c *Core) observe(ctx context.Context, cfg *config.Config) ([]observed, err
 			}
 			im, ok := images[ct.ImageID]
 			if !ok {
-				if im, err = c.dk.Image(ctx, ct.ImageID); err != nil {
+				if im, err = c.dk.Image(ctx, ct.ImageID); docker.IsNotFound(err) {
+					continue // removed with its container since the list
+				} else if err != nil {
 					return nil, err
 				}
 				images[ct.ImageID] = im
@@ -164,8 +169,7 @@ func (c *Core) configImage(ctx context.Context, id string) (string, error) {
 // refImage returns the ID of the local image the reference points to, or "".
 func (c *Core) refImage(ctx context.Context, r string) (string, error) {
 	im, err := c.dk.Image(ctx, r)
-	var ae *docker.APIError
-	if errors.As(err, &ae) && ae.Status == 404 {
+	if docker.IsNotFound(err) {
 		return "", nil
 	}
 	return im.ID, err
@@ -211,6 +215,8 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 	now := c.now().Unix()
 	usedRefs := map[string]bool{}
 	usedSince := map[string]bool{}
+	prev := c.prev
+	c.prev = map[string]entry{}
 	var view []entry
 	for _, o := range obs {
 		ct := o.c
@@ -245,7 +251,7 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 				e.Mode = "pending"
 			}
 		}
-		c.logChange(e)
+		c.logChange(prev, e)
 		view = append(view, e)
 	}
 	forget := int64(cfg.Global.ForgetAfter.D().Seconds())
@@ -265,6 +271,11 @@ func (c *Core) apply(cfg *config.Config, obs []observed) {
 			} else if now-s.Unused >= forget {
 				delete(c.st.Since, k)
 			}
+		}
+	}
+	for k := range c.warned {
+		if name, _, _ := strings.Cut(k, "|"); c.prev[name].Container == "" {
+			delete(c.warned, k)
 		}
 	}
 	c.view = view
@@ -287,8 +298,10 @@ func (c *Core) compare(e *entry, rs *state.Ref, sk string, now int64) {
 	e.Since = s.Since
 }
 
-func (c *Core) logChange(e entry) {
-	p, ok := c.prev[e.Container]
+// logChange logs a change against the previous reconcile; c.prev only holds
+// the containers of this one.
+func (c *Core) logChange(prev map[string]entry, e entry) {
+	p, ok := prev[e.Container]
 	c.prev[e.Container] = e
 	if !ok || p.Available == e.Available && p.Pulled == e.Pulled {
 		return
