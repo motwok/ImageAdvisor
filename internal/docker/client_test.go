@@ -23,7 +23,7 @@ func (r rt) RoundTrip(req *http.Request) (*http.Response, error) {
 func fake(api string) *Client {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"ApiVersion":"`+api+`"}`)
+		io.WriteString(w, `{"ApiVersion":"`+api+`","MinAPIVersion":"1.12"}`)
 	})
 	mux.HandleFunc("/v1.41/containers/json", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("all") != "1" {
@@ -121,6 +121,36 @@ func TestAuthHeader(t *testing.T) {
 func TestOldDaemon(t *testing.T) {
 	if _, reached, err := fake("1.40").CheckVersion(context.Background()); err == nil || !reached {
 		t.Fatalf("expected version error, got %v", err)
+	}
+}
+
+// A daemon whose minimum API version is above 1.41 gets its minimum in the path.
+func TestMinAPIVersion(t *testing.T) {
+	ctx := context.Background()
+	var paths []string
+	c := NewWithHTTP(rt{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/version" {
+			io.WriteString(w, `{"ApiVersion":"1.52","MinAPIVersion":"1.44"}`)
+			return
+		}
+		io.WriteString(w, `[]`)
+	})})
+	c.Containers(ctx)
+	if v, reached, err := c.CheckVersion(ctx); err != nil || !reached || v != "1.52" {
+		t.Fatalf("version: %v %v %v", v, reached, err)
+	}
+	c.Containers(ctx)
+	c.Events(ctx, func(Event) {})
+	want := "/v1.41/containers/json /version /v1.44/containers/json /v1.44/events"
+	if got := strings.Join(paths, " "); got != want {
+		t.Fatalf("paths %q", got)
+	}
+	// A minimum at or below 1.41 keeps 1.41.
+	old := fake("1.47")
+	old.CheckVersion(ctx)
+	if old.apiVersion() != MinAPIVersion {
+		t.Fatalf("version %s", old.apiVersion())
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -78,9 +79,18 @@ func (e Event) Relevant() bool {
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 type Client struct {
-	hc      *http.Client
-	stream  *http.Client
+	hc     *http.Client
+	stream *http.Client
+	mu     sync.Mutex
+	// version is the API version in the request path: MinAPIVersion, or the
+	// daemon's minimum if that is higher (CheckVersion).
 	version string
+}
+
+func (c *Client) apiVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.version
 }
 
 // New creates a client for the Docker socket (Linux) or named pipe (Windows).
@@ -106,7 +116,7 @@ type APIError struct {
 func (e *APIError) Error() string { return fmt.Sprintf("docker API %d: %s", e.Status, e.Message) }
 
 func (c *Client) do(ctx context.Context, p string, header http.Header, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.version+p, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.apiVersion()+p, nil)
 	if err != nil {
 		return err
 	}
@@ -143,7 +153,9 @@ func IsNotFound(err error) bool {
 
 // CheckVersion reads the daemon's API version and fails below MinAPIVersion.
 // reached is true only if the daemon answered with a version, so any other
-// failure is retried instead of read as "too old".
+// failure is retried instead of read as "too old". A daemon whose minimum is
+// above MinAPIVersion (Docker 29.0 to 29.2: 1.44) refuses lower path versions,
+// so its minimum is used from then on.
 func (c *Client) CheckVersion(ctx context.Context) (version string, reached bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/version", nil)
 	if err != nil {
@@ -158,13 +170,19 @@ func (c *Client) CheckVersion(ctx context.Context) (version string, reached bool
 		return "", false, apiError(resp)
 	}
 	var v struct {
-		APIVersion string `json:"ApiVersion"`
+		APIVersion    string `json:"ApiVersion"`
+		MinAPIVersion string `json:"MinAPIVersion"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || v.APIVersion == "" {
 		return "", false, fmt.Errorf("no API version in the /version answer: %v", err)
 	}
 	if CompareVersion(v.APIVersion, MinAPIVersion) < 0 {
 		return v.APIVersion, true, fmt.Errorf("Docker API %s is older than the required %s", v.APIVersion, MinAPIVersion)
+	}
+	if CompareVersion(v.MinAPIVersion, MinAPIVersion) > 0 {
+		c.mu.Lock()
+		c.version = v.MinAPIVersion
+		c.mu.Unlock()
 	}
 	return v.APIVersion, true, nil
 }
@@ -228,7 +246,7 @@ func (c *Client) Distribution(ctx context.Context, ref, auth string) (string, er
 // Events streams container and image events until ctx ends or the stream breaks.
 func (c *Client) Events(ctx context.Context, fn func(Event)) error {
 	filters := url.QueryEscape(`{"type":["container","image"]}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.version+"/events?filters="+filters, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+c.apiVersion()+"/events?filters="+filters, nil)
 	if err != nil {
 		return err
 	}
