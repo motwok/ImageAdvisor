@@ -68,6 +68,9 @@ func TestPipeErrors(t *testing.T) {
 	if err != nil || calls != 2 {
 		t.Fatalf("busy retry: %v %d", err, calls)
 	}
+	if conn.LocalAddr().Network() != "pipe" || conn.RemoteAddr().String() != "x" {
+		t.Fatalf("addr %v %v", conn.LocalAddr(), conn.RemoteAddr())
+	}
 	conn.Close()
 	openPipe = func(string) (*os.File, error) { return nil, errorPipeBusy }
 	cctx, cancel := context.WithCancel(ctx)
