@@ -62,7 +62,8 @@ labels:                            # static labels by rule
 - Invalid: a duration of 0 or less; a registry without `host`, or the same `host` twice; a label name
   that is not a valid Prometheus label name, starts with `__` or is one of ImageAdvisor's own labels
   (`container`, `image`, `reference`, `stack`, `state`, `mode`); two `container_labels` entries with the
-  same target name; an unset environment variable without default.
+  same target name; an unset environment variable without default; an unterminated `${` or an invalid
+  variable name (the error names the key, never the value).
 
 ### Environment variables
 

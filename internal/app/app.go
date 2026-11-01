@@ -111,6 +111,8 @@ type Server struct {
 	Core    *core.Core
 	reload  chan chan error
 	trigger chan struct{}
+	// done is closed when the loop stops; reload requests then answer 503.
+	done    <-chan struct{}
 	cfgStat fileStamp
 }
 
@@ -165,17 +167,33 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "only POST", http.StatusMethodNotAllowed)
 			return
 		}
+		select {
+		case <-s.done:
+			http.Error(w, "ImageAdvisor is stopping.", http.StatusServiceUnavailable)
+			return
+		default:
+		}
+		// The request is queued; the loop does it after a running reconcile.
 		res := make(chan error, 1)
 		select {
 		case s.reload <- res:
 		case <-r.Context().Done():
 			return
-		}
-		if err := <-res; err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		case <-s.done:
+			http.Error(w, "ImageAdvisor is stopping.", http.StatusServiceUnavailable)
 			return
 		}
-		io.WriteString(w, "config reloaded\n")
+		select {
+		case err := <-res:
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			io.WriteString(w, "config reloaded\n")
+		case <-r.Context().Done():
+		case <-s.done:
+			http.Error(w, "ImageAdvisor is stopping.", http.StatusServiceUnavailable)
+		}
 	})
 	return mux
 }
@@ -205,7 +223,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 
 // run starts everything and blocks until ctx ends or the Docker API is too old.
 func run(ctx context.Context, f Flags, log *slog.Logger, hup <-chan os.Signal) int {
-	s := &Server{Flags: f, Log: log, reload: make(chan chan error), trigger: make(chan struct{}, 1)}
+	s := &Server{Flags: f, Log: log, reload: make(chan chan error, 1), trigger: make(chan struct{}, 1)}
 	s.cfgStat = stamp(f.ConfigFile)
 	cfg, found, err := config.Load(f.ConfigFile, os.LookupEnv, false)
 	if err != nil {
@@ -226,6 +244,7 @@ func run(ctx context.Context, f Flags, log *slog.Logger, hup <-chan os.Signal) i
 
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
+	s.done = ctx.Done()
 	ln, err := net.Listen("tcp", f.Listen)
 	if err != nil {
 		log.Error("listen failed", "err", err)

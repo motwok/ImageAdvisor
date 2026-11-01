@@ -84,7 +84,7 @@ func newServer(t *testing.T, cfgText, api string) *Server {
 		}
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := &Server{Flags: Flags{ConfigFile: file}, Log: log, reload: make(chan chan error), trigger: make(chan struct{}, 1)}
+	s := &Server{Flags: Flags{ConfigFile: file}, Log: log, reload: make(chan chan error, 1), trigger: make(chan struct{}, 1)}
 	s.cfgStat = stamp(file)
 	s.Core = core.New(config.Default(), core.Options{Docker: fakeDaemon(api), StorageDir: dir, Log: log})
 	return s
@@ -136,14 +136,57 @@ func TestHandler(t *testing.T) {
 	}
 }
 
-func TestReloadRequestCanceled(t *testing.T) {
-	s := newServer(t, "", "1.47")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+func post(t *testing.T, s *Server, ctx context.Context) (int, string) {
+	t.Helper()
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/-/reload", nil).WithContext(ctx))
-	if strings.Contains(w.Body.String(), "reloaded") {
+	return w.Code, w.Body.String()
+}
+
+func TestReloadRequestCanceled(t *testing.T) {
+	// The queue is full and the client gives up.
+	s := newServer(t, "", "1.47")
+	s.reload <- make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, body := post(t, s, ctx); strings.Contains(body, "reloaded") {
 		t.Fatal("no reload expected")
+	}
+	// Queued, then the client gives up: the request stays queued.
+	s = newServer(t, "", "1.47")
+	ctx, cancel = context.WithCancel(context.Background())
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	if _, body := post(t, s, ctx); strings.Contains(body, "reloaded") || len(s.reload) != 1 {
+		t.Fatalf("queued request lost: %q", body)
+	}
+}
+
+func TestReloadWhileStopping(t *testing.T) {
+	ctx := context.Background()
+	// Already stopped.
+	s := newServer(t, "", "1.47")
+	done := make(chan struct{})
+	close(done)
+	s.done = done
+	if code, _ := post(t, s, ctx); code != 503 {
+		t.Fatalf("stopped: %d", code)
+	}
+	// Stops while the queue is full.
+	s = newServer(t, "", "1.47")
+	s.reload <- make(chan error, 1)
+	done = make(chan struct{})
+	s.done = done
+	go func() { time.Sleep(10 * time.Millisecond); close(done) }()
+	if code, _ := post(t, s, ctx); code != 503 {
+		t.Fatalf("queue full: %d", code)
+	}
+	// Stops while the request is queued.
+	s = newServer(t, "", "1.47")
+	done = make(chan struct{})
+	s.done = done
+	go func() { time.Sleep(10 * time.Millisecond); close(done) }()
+	if code, _ := post(t, s, ctx); code != 503 {
+		t.Fatalf("queued: %d", code)
 	}
 }
 
@@ -200,7 +243,7 @@ func TestLoopReconcileRequest(t *testing.T) {
 		}
 	})})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := &Server{Flags: Flags{ConfigFile: filepath.Join(dir, "none")}, Log: log, reload: make(chan chan error), trigger: make(chan struct{}, 1)}
+	s := &Server{Flags: Flags{ConfigFile: filepath.Join(dir, "none")}, Log: log, reload: make(chan chan error, 1), trigger: make(chan struct{}, 1)}
 	s.Core = core.New(config.Default(), core.Options{Docker: dc, StorageDir: dir, Log: log})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int)

@@ -156,35 +156,40 @@ func Parse(data []byte, lookup LookupFunc) (*Config, error) {
 	return cfg, nil
 }
 
+// expand replaces the variables in all string values; an error names the key, not the value.
 func (c *Config) expand(lookup LookupFunc) error {
 	var err error
-	ex := func(s *string) {
+	ex := func(where string, s *string) {
 		if err == nil {
-			*s, err = Expand(*s, lookup)
+			if *s, err = Expand(*s, lookup); err != nil {
+				err = fmt.Errorf("%s: %w", where, err)
+			}
 		}
 	}
-	for _, l := range [][]string{c.Exclude.Containers, c.Exclude.Images} {
-		for i := range l {
-			ex(&l[i])
-		}
+	for i := range c.Exclude.Containers {
+		ex(fmt.Sprintf("exclude.containers[%d]", i), &c.Exclude.Containers[i])
+	}
+	for i := range c.Exclude.Images {
+		ex(fmt.Sprintf("exclude.images[%d]", i), &c.Exclude.Images[i])
 	}
 	for i := range c.Registries {
-		r := &c.Registries[i]
-		ex(&r.Host)
-		ex(&r.Username)
-		ex(&r.Password)
+		r, where := &c.Registries[i], fmt.Sprintf("registries[%d]", i)
+		ex(where+".host", &r.Host)
+		ex(where+".username", &r.Username)
+		ex(where+".password", &r.Password)
 	}
 	for i := range c.ContainerLabels {
-		ex(&c.ContainerLabels[i].From)
-		ex(&c.ContainerLabels[i].To)
+		where := fmt.Sprintf("container_labels[%d]", i)
+		ex(where+".from", &c.ContainerLabels[i].From)
+		ex(where+".to", &c.ContainerLabels[i].To)
 	}
 	for i := range c.Labels {
-		r := &c.Labels[i]
-		ex(&r.Match.Stack)
-		ex(&r.Match.Container)
-		ex(&r.Match.Image)
+		r, where := &c.Labels[i], fmt.Sprintf("labels[%d]", i)
+		ex(where+".match.stack", &r.Match.Stack)
+		ex(where+".match.container", &r.Match.Container)
+		ex(where+".match.image", &r.Match.Image)
 		for k, v := range r.Labels {
-			ex(&v)
+			ex(where+".labels."+k, &v)
 			r.Labels[k] = v
 		}
 	}
