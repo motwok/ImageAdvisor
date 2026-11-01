@@ -216,6 +216,16 @@ func TestLoopReconcileRequest(t *testing.T) {
 	}
 }
 
+// A stopped loop runs no reconcile on the dead context.
+func TestLoopStopped(t *testing.T) {
+	s := newServer(t, "", "1.47")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if code := s.loop(ctx, nil); code != 0 || s.Core.Ready() {
+		t.Fatalf("exit %d, ready %v", code, s.Core.Ready())
+	}
+}
+
 func TestLoopDockerTooOld(t *testing.T) {
 	s := newServer(t, "", "1.40")
 	if code := s.loop(context.Background(), nil); code != 1 {
