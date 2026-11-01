@@ -6,10 +6,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -32,16 +30,30 @@ func fake(api string) *Client {
 			http.Error(w, "all missing", 400)
 			return
 		}
-		io.WriteString(w, `[{"Id":"abc","Names":["/web-1"],"Image":"nginx:1.29","ImageID":"sha256:1","State":"running","Created":5}]`)
+		io.WriteString(w, `[{"Id":"abc","Names":["/web-1"],"ImageID":"sha256:1","State":"running","Labels":{"a":"b"}}]`)
 	})
 	mux.HandleFunc("/v1.41/containers/abc/json", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"Id":"abc","Image":"sha256:1","Config":{"Image":"ghcr.io/motwok/imageadvisor:latest"}}`)
+		io.WriteString(w, `{"Id":"abc","Image":"sha256:1","Config":{"Image":"nginx:1.29"}}`)
 	})
 	mux.HandleFunc("/v1.41/images/sha256:1/json", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"RepoDigests":["ghcr.io/motwok/imageadvisor@sha256:aa"]}`)
+		io.WriteString(w, `{"Id":"sha256:1","RepoDigests":["nginx@sha256:aa"]}`)
 	})
-	mux.HandleFunc("/v1.41/distribution/", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"Descriptor":{"digest":"sha256:bb"}}`)
+	mux.HandleFunc("/v1.41/images/docker.io/library/nginx:1.29/json", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"Id":"sha256:2"}`)
+	})
+	mux.HandleFunc("/v1.41/distribution/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1.41/distribution/docker.io/library/nginx:1.29/json" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"Descriptor":{"digest":"sha256:bb"},"auth":"`+r.Header.Get("X-Registry-Auth")+`"}`)
+	})
+	mux.HandleFunc("/v1.41/events", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Query().Get("filters"), `"image"`) {
+			http.Error(w, "filters", 400)
+			return
+		}
+		io.WriteString(w, `{"Type":"image","Action":"pull"}`+"\n"+`{"Type":"container","Action":"exec_start"}`+"\n")
 	})
 	mux.HandleFunc("/v1.41/containers/missing/json", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(404)
@@ -57,21 +69,52 @@ func TestClient(t *testing.T) {
 		t.Fatalf("version: %v %v %v", v, reached, err)
 	}
 	cs, err := c.Containers(ctx)
-	if err != nil || len(cs) != 1 || cs[0].Name() != "web-1" || cs[0].Image != "nginx:1.29" || cs[0].ImageID != "sha256:1" {
+	if err != nil || len(cs) != 1 || cs[0].Name() != "web-1" || cs[0].ImageID != "sha256:1" || cs[0].Labels["a"] != "b" {
 		t.Fatalf("containers: %v %v", cs, err)
 	}
-	if j, err := c.Container(ctx, "abc"); err != nil || j.Config.Image != "ghcr.io/motwok/imageadvisor:latest" {
+	if j, err := c.Container(ctx, "abc"); err != nil || j.Config.Image != "nginx:1.29" || j.Image != "sha256:1" {
 		t.Fatalf("container: %v %v", j, err)
 	}
-	if d, err := c.ImageRepoDigests(ctx, "sha256:1"); err != nil || d[0] != "ghcr.io/motwok/imageadvisor@sha256:aa" {
-		t.Fatalf("digests: %v %v", d, err)
+	if im, err := c.Image(ctx, "sha256:1"); err != nil || im.ID != "sha256:1" || im.RepoDigests[0] != "nginx@sha256:aa" {
+		t.Fatalf("image: %v %v", im, err)
 	}
-	if d, err := c.DistributionDigest(ctx, "ghcr.io/motwok/imageadvisor:latest"); err != nil || d != "sha256:bb" {
+	if im, err := c.Image(ctx, "docker.io/library/nginx:1.29"); err != nil || im.ID != "sha256:2" {
+		t.Fatalf("image by ref: %v %v", im, err)
+	}
+	if d, err := c.Distribution(ctx, "docker.io/library/nginx:1.29", ""); err != nil || d != "sha256:bb" {
 		t.Fatalf("distribution: %v %v", d, err)
+	}
+	if d, err := c.Distribution(ctx, "docker.io/library/nginx:1.29", "tok"); err != nil || d != "sha256:bb" {
+		t.Fatalf("distribution with auth: %v %v", d, err)
+	}
+	_, err = c.Distribution(ctx, "docker.io/library/x:1", "")
+	if e, ok := err.(*APIError); !ok || e.Status != 404 {
+		t.Fatalf("distribution 404: %v", err)
 	}
 	_, err = c.Container(ctx, "missing")
 	if e, ok := err.(*APIError); !ok || e.Status != 404 || !strings.Contains(e.Error(), "No such container") {
 		t.Fatalf("api error: %v", err)
+	}
+	var got []Event
+	err = c.Events(ctx, func(e Event) { got = append(got, e) })
+	if err != io.EOF || len(got) != 2 || !got[0].Relevant() || got[1].Relevant() {
+		t.Fatalf("events: %v %v", got, err)
+	}
+}
+
+func TestAuthHeader(t *testing.T) {
+	var seen string
+	c := NewWithHTTP(rt{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-Registry-Auth")
+		io.WriteString(w, `{"Descriptor":{"digest":"d"}}`)
+	})})
+	c.Distribution(context.Background(), "r", "tok")
+	if seen != "tok" {
+		t.Fatalf("header %q", seen)
+	}
+	c.Distribution(context.Background(), "r", "")
+	if seen != "" {
+		t.Fatalf("header without auth %q", seen)
 	}
 }
 
@@ -88,7 +131,19 @@ func TestCompareVersion(t *testing.T) {
 	}
 }
 
-func TestName(t *testing.T) {
+func TestRelevant(t *testing.T) {
+	for _, e := range []Event{{"container", "create"}, {"container", "start"}, {"container", "stop"},
+		{"container", "die"}, {"container", "destroy"}, {"image", "pull"}, {"image", "tag"},
+		{"image", "untag"}, {"image", "delete"}} {
+		if !e.Relevant() {
+			t.Errorf("%v should be relevant", e)
+		}
+	}
+	for _, e := range []Event{{"container", "exec_start"}, {"image", "push"}, {"network", "create"}} {
+		if e.Relevant() {
+			t.Errorf("%v should not be relevant", e)
+		}
+	}
 	if (Container{ID: "x"}).Name() != "x" {
 		t.Fatal("name fallback")
 	}
@@ -107,6 +162,9 @@ func TestErrors(t *testing.T) {
 	if _, _, err := c.CheckVersion(nilCtx); err == nil {
 		t.Error("version: bad request")
 	}
+	if err := c.Events(nilCtx, nil); err == nil {
+		t.Error("events: bad request")
+	}
 
 	ctx := context.Background()
 	d := NewWithHTTP(errRT{})
@@ -116,34 +174,21 @@ func TestErrors(t *testing.T) {
 	if _, reached, err := d.CheckVersion(ctx); err == nil || reached {
 		t.Error("version: dial")
 	}
+	if err := d.Events(ctx, nil); err == nil {
+		t.Error("events: dial")
+	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	e := NewWithHTTP(rt{http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(500)
 		io.WriteString(w, "plain failure\n")
-	})
-	e := NewWithHTTP(rt{mux})
+	})})
 	if _, err := e.Containers(ctx); err == nil || err.(*APIError).Message != "plain failure" {
 		t.Errorf("plain error: %v", err)
 	}
 	if _, reached, err := e.CheckVersion(ctx); err == nil || !reached {
 		t.Errorf("version: bad body: %v", err)
 	}
-}
-
-func TestUnixSocket(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "docker.sock")
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Skipf("no unix sockets: %v", err)
-	}
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"ApiVersion":"1.47"}`)
-	}))
-	srv.Listener = l
-	srv.Start()
-	defer srv.Close()
-	if v, _, err := New(sock).CheckVersion(context.Background()); err != nil || v != "1.47" {
-		t.Fatalf("%q %v", v, err)
+	if err := e.Events(ctx, nil); err == nil || err.(*APIError).Status != 500 {
+		t.Errorf("events: status: %v", err)
 	}
 }
