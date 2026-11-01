@@ -4,7 +4,7 @@
 
 ## How it was tested
 
-<!-- Automated tests or the smoke test that cover the change. -->
+<!-- Automated tests (unit or integration) that cover the change. -->
 
 ## Checklist
 

@@ -15,5 +15,8 @@ ImageAdvisor is written in Go. The binary contains:
 - the Go standard library, BSD-3-Clause license, Copyright The Go Authors;
 - go-yaml, the YAML parser, MIT and Apache-2.0 licenses, see its repository.
 
-The container image is built FROM scratch and contains only the ImageAdvisor
-binary.
+The Linux container images are built FROM scratch and contain only the
+ImageAdvisor binary. The Windows container images add the binary to
+mcr.microsoft.com/windows/nanoserver, which Microsoft licenses under its own
+terms (see the image on the Microsoft Artifact Registry); using a Windows image
+means accepting them.

@@ -45,7 +45,7 @@ update to the newest one.
 ## Automatic dependency releases
 
 Updates of Go and of ImageAdvisor's dependencies are merged automatically by Dependabot once the build
-and the smoke test pass, and **every such merge that changes the image is a release**. Security fixes
+and the tests pass, and **every such merge that changes the image is a release**. Security fixes
 therefore reach `:latest` quickly, but a vulnerable or compromised Go release or dependency would be
 shipped automatically as well. If you want to review updates first, pin a version tag instead of
 `:latest`. Details and mitigations:
@@ -55,7 +55,7 @@ shipped automatically as well. If you want to review updates first, pin a versio
 
 ImageAdvisor deliberately does things that can look alarming but are by design:
 
-- it mounts the **Docker socket** (read-only use) to list containers and their images,
+- it mounts the **Docker socket or pipe** (read-only use) to list containers and their images,
 - it lets the **Docker daemon query registries** for the current digest of image tags,
 - `/metrics` exposes **container and image names**. Do not publish its port to untrusted networks.
 

@@ -11,36 +11,53 @@ permissions:
 
 jobs:
   unit:
-    name: Unit tests
-    runs-on: ubuntu-latest
+    name: Unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: gofmt
+        if: runner.os == 'Linux'
         run: |
           out=$(gofmt -l .)
           [ -z "$out" ] || { echo "$out"; exit 1; }
       - run: go vet ./...
       - name: Test
+        if: runner.os == 'Linux'
         run: |
           mkdir -p "$PWD/cover-unit"
           go test -race -covermode=atomic -coverpkg=./... -cover ./... -args -test.gocoverdir="$PWD/cover-unit"
+      - name: Test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force cover-unit | Out-Null
+          go test -covermode=atomic -coverpkg=./... -cover ./... -args "-test.gocoverdir=$PWD\cover-unit"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Cross build
+        if: runner.os == 'Linux'
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/imageadvisor
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /dev/null ./cmd/imageadvisor
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/imageadvisor
       - uses: actions/upload-artifact@v7
         with:
-          name: cover-unit
+          name: cover-unit-${{ runner.os }}
           path: cover-unit
 
   integration:
-    name: Integration (${{ matrix.arch }})
+    name: Integration (${{ matrix.arch }}, ${{ matrix.store }})
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        store: [classic, containerd]
         include:
           - arch: amd64
             runner: ubuntu-24.04
@@ -52,17 +69,51 @@ jobs:
       - name: Build test image
         run: docker build --build-arg COVER=1 -t imageadvisor:test .
       - name: Integration test
-        run: sudo tests/integration/run.sh imageadvisor:test "$PWD/cover-integration"
+        run: tests/integration/run.sh imageadvisor:test "$PWD/cover-integration" ${{ matrix.store }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: cover-integration-${{ matrix.arch }}
+          name: cover-integration-${{ matrix.arch }}-${{ matrix.store }}
+          path: cover-integration
+          if-no-files-found: ignore
+
+  integration-windows:
+    name: Integration (windows, ${{ matrix.ltsc }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ltsc: ltsc2022
+            runner: windows-2022
+          - ltsc: ltsc2025
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build test image
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = '0'
+          go build -cover -covermode=atomic -coverpkg=./... -o dist/imageadvisor.exe ./cmd/imageadvisor
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          docker build -f Dockerfile.windows --build-arg OSVERSION=${{ matrix.ltsc }} -t imageadvisor:test .
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Integration test
+        shell: pwsh
+        run: tests/integration/run-windows.ps1 imageadvisor:test "$PWD\cover-integration" ${{ matrix.ltsc }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cover-integration-windows-${{ matrix.ltsc }}
           path: cover-integration
           if-no-files-found: ignore
 
   coverage:
     name: Coverage
-    needs: [unit, integration]
+    needs: [unit, integration, integration-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -101,7 +152,7 @@ jobs:
   release:
     name: Release
     if: github.event_name == 'push'
-    needs: [unit, integration, coverage]
+    needs: [unit, integration, integration-windows, coverage]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -115,7 +166,7 @@ jobs:
         id: changed
         run: |
           last=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [ -z "$last" ] || ! git diff --quiet "$last" HEAD -- '*.go' ':(exclude)*_test.go' go.mod go.sum Dockerfile; then
+          if [ -z "$last" ] || ! git diff --quiet "$last" HEAD -- '*.go' ':(exclude)*_test.go' go.mod go.sum Dockerfile Dockerfile.windows; then
             echo "release=true" >> "$GITHUB_OUTPUT"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
@@ -133,6 +184,10 @@ jobs:
       - name: Build time
         id: time
         run: echo "unix=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        if: steps.changed.outputs.release == 'true'
+        with:
+          go-version-file: go.mod
       - uses: docker/setup-buildx-action@v4
         if: steps.changed.outputs.release == 'true'
       - uses: docker/login-action@v4
@@ -141,17 +196,53 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+      - name: Build Linux
+        id: linux
         if: steps.changed.outputs.release == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
+          provenance: false
           build-args: |
             VERSION=${{ steps.drafter.outputs.resolved_version }}
             REVISION=${{ github.sha }}
             BUILD_TIME=${{ steps.time.outputs.unix }}
-          tags: |
-            ghcr.io/motwok/imageadvisor:${{ steps.drafter.outputs.resolved_version }}
-            ghcr.io/motwok/imageadvisor:latest
+          outputs: type=image,name=ghcr.io/motwok/imageadvisor,push-by-digest=true,name-canonical=true,push=true
+      - name: Build Windows
+        if: steps.changed.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.drafter.outputs.resolved_version }}
+          BUILD_TIME: ${{ steps.time.outputs.unix }}
+        run: |
+          pkg=github.com/motwok/ImageAdvisor/internal/app
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X $pkg.Version=$VERSION -X $pkg.Revision=$GITHUB_SHA -X $pkg.BuildTime=$BUILD_TIME" \
+            -o dist/imageadvisor.exe ./cmd/imageadvisor
+          for v in ltsc2019 ltsc2022 ltsc2025; do
+            docker buildx build --platform windows/amd64 -f Dockerfile.windows --build-arg OSVERSION=$v \
+              --provenance=false --metadata-file "meta-$v.json" \
+              --output type=image,name=ghcr.io/motwok/imageadvisor,push-by-digest=true,name-canonical=true,push=true .
+          done
+      - name: Push manifest list
+        if: steps.changed.outputs.release == 'true'
+        env:
+          IMG: ghcr.io/motwok/imageadvisor
+          LINUX: ${{ steps.linux.outputs.digest }}
+          VERSION: ${{ steps.drafter.outputs.resolved_version }}
+        run: |
+          # imagetools create drops os.version, docker manifest annotate keeps it.
+          linux=$(docker buildx imagetools inspect --raw "$IMG@$LINUX" | jq -r '.manifests[].digest')
+          win=$(jq -r '"\(.["containerimage.digest"]) \(.["containerimage.descriptor"].platform["os.version"])"' meta-*.json)
+          docker run --rm -i -e IMG -e VERSION -e LINUX_DIGESTS="$linux" -e WIN="$win" \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" docker:29-cli sh -eu <<'EOF'
+          for tag in "$VERSION" latest; do
+            refs=
+            for d in $LINUX_DIGESTS $(echo "$WIN" | cut -d' ' -f1); do refs="$refs $IMG@$d"; done
+            docker manifest create "$IMG:$tag" $refs
+            echo "$WIN" | while read -r d v; do
+              docker manifest annotate --os-version "$v" "$IMG:$tag" "$IMG@$d"
+            done
+            docker manifest push --purge "$IMG:$tag"
+          done
+          EOF

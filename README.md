@@ -7,8 +7,7 @@ ImageAdvisor runs as a container next to [cAdvisor](https://github.com/google/ca
 registry, through the Docker daemon, whether the tag a container runs points to a newer image than the
 one it was started from. It never pulls, restarts or changes anything.
 
-> **Status:** in development (0.x). The exporter skeleton runs (endpoints, config, Docker connection);
-> the image check itself is designed but not built yet. Behavior and metrics may change before 1.0.
+> **Status:** in development (0.x). Behavior and metrics may change before 1.0.
 
 ## Why
 
@@ -30,8 +29,10 @@ flowchart LR
 
 ## Requirements
 
-- Linux on `amd64` or `arm64` (the image is multi-arch).
 - Docker Engine (rootful) with API 1.41 or newer (Docker 20.10+).
+- Linux on `amd64` or `arm64`, or Windows Server 2022 or 2025 with Windows containers (a Windows Server
+  2019 variant is built but not tested). One image tag for all of them.
+- Compose stacks and Swarm services.
 
 ## Quick start
 
@@ -42,21 +43,33 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - imageadvisor-data:/data        # config.yml
+      - imageadvisor-data:/data        # config.yml and state.json
     ports:
       - "8080:8080"
 volumes:
   imageadvisor-data:
 ```
 
-The image already sets `--config.file=/data/config.yml`. Endpoints: `/metrics`, `/-/healthy`,
-`/-/ready`, `POST /-/reload`.
+Then, per container:
+
+```text
+imageadvisor_container_image_update_available{container="web",image="nginx:1.27",stack="shop"} 1
+imageadvisor_container_image_update_available_since_timestamp_seconds{container="web",image="nginx:1.27",stack="shop"} 1.793493325e+09
+```
+
+The image already sets `--config.file=/data/config.yml` and `--storage.path=/data`. Endpoints:
+`/metrics`, `/-/healthy`, `/-/ready`, `POST /-/reload`. Windows and all options:
+[Install.md](docs/Install.md).
+
+**Each check of a Docker Hub image counts as one pull** against the Hub pull limit; by default each
+image is checked once a day.
 
 ## Documentation
 
-- [Install.md](docs/Install.md): running the container, Prometheus, update, uninstall.
+- [Install.md](docs/Install.md): running the container on Linux and Windows, Prometheus, update,
+  uninstall.
 - [Configuration.md](docs/Configuration.md): flags and every config key.
-- [Metrics.md](docs/Metrics.md): all metrics.
+- [Metrics.md](docs/Metrics.md): all metrics and example alerts.
 - [Troubleshooting.md](docs/Troubleshooting.md): what to do when something looks wrong.
 - [Build.md](docs/Build.md): building, unit and integration tests, coverage.
 
